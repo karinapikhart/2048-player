@@ -10,7 +10,8 @@
 # first just learning how to slide pieces around without paying any attention to optimized choice
 # then implementing some preference for move choice
 # doing good quick testing of mini pieces of code in the python console instead of having to rerun a big script every time, as it grew
-# finally, working on algorithmic improvements
+# then working on some algorithmic improvements
+# then trying to get smarter about logging and data visualization to give more insights and speed up algorithm design
 
 # TODO - store score values and plot them, versus move number
 # TODO - implement machine learning!
@@ -31,6 +32,8 @@ import random
 import math
 import pprint
 import numpy
+import csv
+
 
 ####################
 ## DEFINE GLOBALS ##
@@ -41,6 +44,19 @@ GRID_SIZE = 4
 MOVES = ['DOWN', 'UP', 'LEFT', 'RIGHT']
 ALGORITHM = 4
 AUTO_PLAY = True
+LOG_FILE_NAME = '2048-MoveLog-' + time.strftime('%Y%m%d-%H%M%S') + '.csv'
+LOG_FILE_PATH = '/tmp/' + LOG_FILE_NAME
+LOG_HEADER = ['move_num'
+    , 'move'
+    , 'is_selected_move'
+    , 'total_score'
+    , 'emptiness_score'
+    , 'x_com_score'
+    , 'y_com_score'
+    , 'combine_biggies_score'
+    , 'best_future_score'
+    , 'current_board'
+    , 'resulting_board']
 
 ######################
 ## DEFINE FUNCTIONS ##
@@ -72,7 +88,7 @@ def get_board_matrix(board_state):
 
     return board_matrix
 
-def choose_move(board, last_board, last_move, algo_num):
+def choose_move(board, last_board, last_move, algo_num, move_num):
 
     # zeroeth algorithm: always choose 'DOWN'
     if algo_num == 0:
@@ -82,16 +98,13 @@ def choose_move(board, last_board, last_move, algo_num):
     # scores: 1492, 452, 836, 316
     if algo_num == 1:
         moves = ['DOWN', 'UP', 'LEFT', 'RIGHT']
-        #index = int(math.floor(random.random()*40))/10
-        #selected_move = moves[index]
         selected_move = random.choice(moves)
 
-    # second algorithm: always choose down first, left next, right next, up last
+    # second algorithm: always choose up first, left next, right next, down last
     # scores: 1892, 3488, 2804, 3452
     # subject feedback: looks a lot like me playing when i watch it! cool!
     # but can't seem to get to 2048. needs to be smarter!
     elif algo_num == 2:
-        #ordered_move_preference = ['DOWN', 'LEFT', 'RIGHT', 'UP']
         ordered_move_preference = ['UP', 'LEFT', 'RIGHT', 'DOWN']
         if not numpy.array_equal(last_board, board):
             selected_move = ordered_move_preference[0]
@@ -101,6 +114,7 @@ def choose_move(board, last_board, last_move, algo_num):
 
     # third algorithm: weight the choices, and then choose weighted random
     # scores: 808
+    # not as good as algo 2!
     elif algo_num == 3:
         weights = {'DOWN': 10
                    , 'LEFT': 8
@@ -114,39 +128,68 @@ def choose_move(board, last_board, last_move, algo_num):
 
         selected_move = random.choice(move_choices)
 
-    # as much like Karina would play as possible
+    # try to make this as much like my personal algorithm when I play as possible
     # configs: 1, 1
     # scores: 5672, 4136, 3416, 3968
     # configs: 1, 10, 0, 1
     # scores: 11144, 3124, 3620, 3900
     # max tile: 1024!!
     elif algo_num == 4:
-        best_score = -10000000
+        best_score = -10000000 # TODO - may need to fix this... a little hacky, but i saw it done at kiva. otherwise we may hit the selected_move = None issue!
         selected_move = None
+        moves_to_log = []
         for move in MOVES:
-            print 'evaluating', move
+            #print 'evaluating', move
             potential_new_board = get_potential_new_board(move, board)
 
             # if the move doesn't do anything, skip it
             if numpy.array_equal(board, potential_new_board):
-                print 'move has no effect. skipping scoring.'
+                #print 'move has no effect. skipping scoring.'
                 continue
 
-            print potential_new_board
-            move_score = score_board(potential_new_board)
+            #print potential_new_board
+            move_score, log_data = score_board(potential_new_board)
             if move_score > best_score:
                 selected_move = move
                 best_score = move_score
 
+            log_data['move_num'] = move_num
+            log_data['current_board'] = board
+            log_data['move'] = move
+            log_data['resulting_board'] = potential_new_board
+            moves_to_log.append(log_data)
+
+        for entry in moves_to_log:
+            if entry['move'] == selected_move:
+                entry['is_selected_move'] = 1
+            else:
+                entry['is_selected_move'] = 0
+
+            log(entry)
+
     return selected_move
 
+def log(evaluated_move_details):
+    log_entry = []
+    for item in LOG_HEADER:
+        log_entry.append(evaluated_move_details[item])
+
+    with open(LOG_FILE_PATH, 'ab') as csvfile:
+        f = csv.writer(csvfile)
+        f.writerow(log_entry)
+
+    return
+
 # give the potential move a score. bigger score is better!
-# current observations are that we are letting the anchor slip away, and arent opportunisticly combining big guys
+# current observations are that we are letting the anchor slip away, and aren't opportunistically combining big guys
+# TODO - need to normalize these scores so that they are tunable in some sensible way
+# need to make the scoring nonlinear for some of the components -- e.g. emptiness should get prioritized as real estate runs low
 def score_board(board):
 
     # configurations!
     empty_space_weight = 1
-    orderliness_weight = 100
+    x_com_weight = 300
+    y_com_weight = 100
     #anchor_row_protection_weight = 1 # TODO - unused
     #risk_of_wedging_weight = 1
     #next_moves_weight = 1
@@ -158,7 +201,8 @@ def score_board(board):
 
     # TRY TO KEEP THE NUMBERS ORGANIZED!
     x, y = get_center_of_mass(board)
-    orderliness_score = orderliness_weight * ((1/x) + (1/y))
+    x_com_score = 1/x * x_com_weight
+    y_com_score = 1/y * y_com_weight
 
     # TRY TO REDUCE THE NUMBER OF DUPLICATE NUMBERS, ESPECIALLY BIG NUMBERS!
     #unique = numpy.unique(board)
@@ -175,23 +219,29 @@ def score_board(board):
                 # TODO - remove code duplication from in here. this function is a little recursive
                 future_score += empty_space_weight * get_num_empties(future_board)
                 x, y = get_center_of_mass(board)
-                future_score += orderliness_weight * ((1/x) + (1/y))
+                future_score += 1/x * x_com_weight
+                future_score += 1/y * y_com_weight
                 future_score += get_combine_big_numbers_score(board, combine_big_numbers_bonus)
 
                 if future_score > best_future_score:
                     best_future_score = future_score
     best_future_score *= best_future_score_weight
 
-    score = empty_score + orderliness_score + best_future_score + combine_biggies_score
+    score_components = {
+        'emptiness_score': empty_score
+        , 'x_com_score': x_com_score
+        , 'y_com_score': y_com_score
+        , 'combine_biggies_score': combine_biggies_score
+        , 'best_future_score': best_future_score
+                        }
 
-    print 'empty_score:', empty_score
-    print 'center_of_mass_score:', orderliness_score
-    print 'combine_biggies_score:', combine_biggies_score
-    print 'best_future_score:', best_future_score
-    print 'score:', score
-    print '---------------------------'
+    score = 0
+    for component in score_components.keys():
+        score += score_components[component]
 
-    return score
+    score_components['total_score'] = score
+
+    return score, score_components
 
 def get_combine_big_numbers_score(board, bonus):
     score = 0
@@ -199,7 +249,6 @@ def get_combine_big_numbers_score(board, bonus):
         for element in row:
             score += element ** bonus
     return score
-
 
 def get_num_empties(board):
     return GRID_SIZE * GRID_SIZE - numpy.count_nonzero(board)
@@ -319,45 +368,60 @@ def is_game_over(browser):
     except:
         return False
 
-
-
 ##########
 ## MAIN ##
 ##########
 
-print 'instantiating Chrome browser'
+# launch the website
 browser = webdriver.Chrome()
-
 launch_website(browser)
 
+# start a log file for moves chosen
+if ALGORITHM == 4:
+    with open(LOG_FILE_PATH, 'wb') as csvfile:
+        f = csv.writer(csvfile)
+        f.writerow(LOG_HEADER)
+
+move_num = 1
 game_over = False
 last_board_matrix = numpy.array([])
 last_move = 'DOWN'
 while not game_over:
-    #print 'observing current board state...'
 
+    # observe the board
     try:
         board_state = observe_board(browser)
     except:
         print 'too speedy? failed to get board state. try again'
         continue
 
+    # convert board to a matrix
     board_matrix = get_board_matrix(board_state)
     print board_matrix
 
-    #print 'choosing move...'
-    selected_move = choose_move(board_matrix, last_board_matrix, last_move, ALGORITHM)
+    # choose what move to make next
+    selected_move = choose_move(board_matrix, last_board_matrix, last_move, ALGORITHM, move_num)
     print 'move chosen: ' + selected_move
 
+    # wait for player to confirm
     if not AUTO_PLAY:
         ready = raw_input('ready to make move?')
 
-    #print 'playing move: ' + selected_move + '...'
+    # make move
     play(browser, selected_move)
-    #print 'checking game state'
-    game_over = is_game_over(browser) # TODO - this is not working, need to come back to this because it never ends
-    #print 'game over? ' + str(game_over)
+
+    # check if game is over
+    # TODO - this is not working, need to come back to this because it never ends
+    game_over = is_game_over(browser)
 
     # store last moves for next time
     last_board_matrix = board_matrix
     last_move = selected_move
+
+    move_num += 1
+
+
+# TODO
+# graph the scores! visualize and learn!
+# then, make a movie of the moves to see what worked/didnt to play alongside the graph?
+# plot_game_stats()
